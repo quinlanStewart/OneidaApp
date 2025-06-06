@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oneida County Parcel Map</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+        .search-container {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 400px;
+        }
+        #addressInput {
+            width: 280px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        #searchBtn {
+            padding: 8px 15px;
+            background: #007cba;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-left: 5px;
+        }
+        #searchBtn:hover {
+            background: #005a87;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .error {
+            color: #d32f2f;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .success {
+            color: #2e7d32;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .info-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 300px;
+            font-size: 12px;
+        }
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            font-size: 16px;
+            color: #333;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007cba;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-right: 15px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            font-size: 12px;
+        }
+        .dropzone {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.95);
+            border: 3px dashed #007cba;
+            border-radius: 10px;
+            z-index: 3000;
+            width: 350px;
+            height: 180px;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: #007cba;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .dropzone.active {
+            display: flex;
+        }
+        .dropzone p {
+            margin: 15px 0 0 0;
+            font-size: 13px;
+            color: #444;
+            font-weight: normal;
+        }
+    </style>
+    <!-- Add shpjs for shapefile parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/shpjs@latest/dist/shp.min.js"></script>
+</head>
+<body>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner"></div>
+        <div>Loading Oneida County parcel data...</div>
+    </div>
+    
+    <div class="search-container">
+        <input type="text" id="addressInput" placeholder="Enter address in Oneida County (e.g., 123 Main St, Rome, NY)" />
+        <button id="searchBtn">Search</button>
+        <div id="searchStatus"></div>
+    </div>
+    
+    <div class="info-panel">
+        <h4 style="margin: 0 0 10px 0;">Oneida County Parcels</h4>
+        <div id="parcelCount">Loading...</div>
+        <div style="margin-top: 10px;">
+            <strong>Click any parcel</strong> to view details
+        </div>
+        <div style="margin-top: 10px;">
+            <button id="zoomToCounty" style="padding: 5px 10px; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">Zoom to County</button>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <div><strong>Map Controls:</strong></div>
+        <div>• Mouse wheel: Zoom</div>
+        <div>• Click + drag: Pan</div>
+        <div>• Click parcel: View info</div>
+        <div style="margin-top:6px;">
+            <strong>Drag & drop a GeoJSON or Shapefile (.zip) anywhere on the map to visualize it</strong>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+    <div id="dropzone" class="dropzone">
+        <div>Drop your <span style="color:#005a87">GeoJSON</span> or <span style="color:#28a745">Shapefile (.zip)</span> here</div>
+        <p>It will be visualized on the map.<br><span style="font-size:12px;">(Your file never leaves your computer)</span></p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        // Initialize the map - will be repositioned once data loads
+        const map = L.map('map').setView([43.2081, -75.4557], 9);
+        
+        // Use OpenStreetMap tiles (most reliable)
+        const tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+        
+        // Parcel styling - more visible borders
+        const parcelStyle = {
+            color: '#2E7D32',      // Dark green border
+            weight: 1.5,           // Thicker border
+            opacity: 0.9,          // More opaque border
+            fillColor: '#A5D6A7',  // Light green fill
+            fillOpacity: 0.4       // Semi-transparent fill
+        };
+        
+        const highlightStyle = {
+            color: '#D32F2F',      // Red border
+            weight: 3,             // Thick border
+            opacity: 1,            // Fully opaque
+            fillColor: '#FFCDD2',  // Light red fill
+            fillOpacity: 0.7       // More opaque fill
+        };
+        
+        let parcelLayer;
+        let highlightedParcel = null;
+        let parcelData = null;
+        let searchMarker = null;
+        let userUploadLayer = null; // for drag & drop feature
+
+        // --- Drag & Drop Support ---
+        const dropzone = document.getElementById('dropzone');
+        function showDropzone() { dropzone.classList.add('active'); }
+        function hideDropzone() { dropzone.classList.remove('active'); }
+
+        // Drag events for visual feedback
+        document.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            if (!dropzone.classList.contains('active')) showDropzone();
+        });
+        document.addEventListener('dragleave', function(e) {
+            if (e.target === dropzone || e.pageX === 0 && e.pageY === 0) hideDropzone();
+        });
+        document.addEventListener('drop', function(e) {
+            e.preventDefault();
+            hideDropzone();
+            if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+            handleFileDrop(e.dataTransfer.files[0]);
+        });
+
+        // Main handler for dropped files
+        function handleFileDrop(file) {
+            if (!file) return;
+            const name = file.name.toLowerCase();
+            if (name.endsWith('.geojson') || name.endsWith('.json')) {
+                // Read as text
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    try {
+                        const geojson = JSON.parse(evt.target.result);
+                        visualizeUserLayer(geojson, 'User GeoJSON');
+                    } catch (err) {
+                        alert('Could not parse GeoJSON: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            } else if (name.endsWith('.zip')) {
+                // SHP: Parse with shpjs
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    shp(evt.target.result).then(function(geojson) {
+                        visualizeUserLayer(geojson, 'User Shapefile');
+                    }).catch(function(err) {
+                        alert('Could not parse Shapefile: ' + err.message);
+                    });
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                alert('Unsupported file type. Please drop a .geojson, .json, or zipped shapefile (.zip).');
+            }
+        }
+
+        function visualizeUserLayer(geojson, layerName = 'User Layer') {
+            // Remove previous user-uploaded layer
+            if (userUploadLayer) {
+                map.removeLayer(userUploadLayer);
+            }
+            // Use Leaflet to add layer
+            userUploadLayer = L.geoJSON(geojson, {
+                style: { color: '#007cba', weight: 2, fillColor: '#b3e6ff', fillOpacity: 0.3 },
+                onEachFeature: function(feature, layer) {
+                    let props = feature.properties || {};
+                    let info = `<div style="font-family:Arial,sans-serif"><strong>${layerName}</strong>`;
+                    let any = false;
+                    for (const [k,v] of Object.entries(props)) {
+                        info += `<br/><strong>${k}:</strong> ${v}`;
+                        any = true;
+                    }
+                    if (!any) info += '<br/><em>No properties</em>';
+                    info += '</div>';
+                    layer.bindPopup(info);
+                }
+            }).addTo(map);
+            // Zoom to layer bounds
+            if (userUploadLayer.getBounds().isValid()) {
+                map.fitBounds(userUploadLayer.getBounds(), {padding: [20,20], maxZoom: 14});
+            }
+        }
+
+        // --- End Drag & Drop ---
+
+        // Load parcel data from GitHub
+        async function loadParcelData() {
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const parcelCountDiv = document.getElementById('parcelCount');
+            
+            try {
+                // GitHub raw URL for your GeoJSON file
+                const url = 'https://media.githubusercontent.com/media/quinlanStewart/OneidaDraft/main/parcel_data.geojson';
+                
+                console.log('Loading parcel data from:', url);
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to load data: ${response.status} ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('Parcel data loaded successfully:', data.features?.length || 0, 'parcels');
+                
+                if (!data.features || data.features.length === 0) {
+                    throw new Error('No parcel features found in the data');
+                }
+                
+                parcelData = data;
+                
+                // Update parcel count
+                parcelCountDiv.innerHTML = `<strong>${data.features.length.toLocaleString()}</strong> parcels loaded`;
+                
+                // Add parcels to map
+                loadParcelsToMap(data);
+                
+                // Hide loading overlay
+                loadingOverlay.style.display = 'none';
+                
+            } catch (error) {
+                console.error('Error loading parcel data:', error);
+                
+                // Show error and provide fallback
+                loadingOverlay.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <div style="color: #d32f2f; font-size: 18px; margin-bottom: 10px;">Unable to Load Parcel Data</div>
+                        <div style="margin-bottom: 15px;">${error.message}</div>
+                        <div style="margin-bottom: 15px;">
+                            <button onclick="location.reload()" style="padding: 10px 20px; background: #007cba; color: white; border: none; border-radius: 3px; cursor: pointer; margin-right: 10px;">Retry</button>
+                            <button onclick="loadSampleData()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer;">Load Sample Data</button>
+                        </div>
+                        <div style="font-size: 12px; color: #666;">Sample data will show a few test parcels in Oneida County</div>
+                    </div>
+                `;
+                parcelCountDiv.innerHTML = '<span style="color: #d32f2f;">Failed to load</span>';
+            }
+        }
+        
+        // Fallback sample data for Oneida County
+        window.loadSampleData = function() {
+            const sampleData = {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "PARCEL_ID": "318.001-1-1",
+                            "OWNER": "City of Rome",
+                            "ADDRESS": "198 N Washington St, Rome, NY 13440",
+                            "ACRES": 0.25,
+                            "ASSESSED_VALUE": 150000
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[
+                                [-75.4557, 43.2128],
+                                [-75.4552, 43.2128],
+                                [-75.4552, 43.2132],
+                                [-75.4557, 43.2132],
+                                [-75.4557, 43.2128]
+                            ]]
+                        }
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "PARCEL_ID": "318.001-1-2",
+                            "OWNER": "Sample Property Owner",
+                            "ADDRESS": "Main St, Rome, NY 13440",
+                            "ACRES": 0.18,
+                            "ASSESSED_VALUE": 85000
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[
+                                [-75.4550, 43.2125],
+                                [-75.4545, 43.2125],
+                                [-75.4545, 43.2129],
+                                [-75.4550, 43.2129],
+                                [-75.4550, 43.2125]
+                            ]]
+                        }
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "PARCEL_ID": "300.001-1-5",
+                            "OWNER": "Utica Sample Owner",
+                            "ADDRESS": "Genesee St, Utica, NY 13501",
+                            "ACRES": 0.31,
+                            "ASSESSED_VALUE": 220000
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[
+                                [-75.2321, 43.1009],
+                                [-75.2315, 43.1009],
+                                [-75.2315, 43.1015],
+                                [-75.2321, 43.1015],
+                                [-75.2321, 43.1009]
+                            ]]
+                        }
+                    }
+                ]
+            };
+            
+            parcelData = sampleData;
+            document.getElementById('parcelCount').innerHTML = `<strong>${sampleData.features.length}</strong> sample parcels loaded`;
+            loadParcelsToMap(sampleData);
+            document.getElementById('loadingOverlay').style.display = 'none';
+        };
+        
+        // Add parcels to map
+        function loadParcelsToMap(data) {
+            // Remove existing parcel layer
+            if (parcelLayer) {
+                map.removeLayer(parcelLayer);
+            }
+            
+            parcelLayer = L.geoJSON(data, {
+                style: function(feature) {
+                    return parcelStyle;
+                },
+                onEachFeature: function(feature, layer) {
+                    // Create popup content from available properties
+                    const props = feature.properties;
+                    let popupContent = '<div style="font-family: Arial, sans-serif; max-width: 300px;">';
+                    popupContent += '<h3 style="margin: 0 0 10px 0; color: #333; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Parcel Information</h3>';
+                    
+                    // Display key properties first
+                    const keyProps = ['PARCEL_ID', 'OWNER', 'ADDRESS', 'ACRES', 'ASSESSED_VALUE'];
+                    
+                    keyProps.forEach(key => {
+                        if (props[key] !== null && props[key] !== undefined && props[key] !== '') {
+                            const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            let displayValue = props[key];
+                            
+                            // Format certain fields
+                            if (key === 'ACRES' && typeof displayValue === 'number') {
+                                displayValue = displayValue.toFixed(3) + ' acres';
+                            } else if (key === 'ASSESSED_VALUE' && typeof displayValue === 'number') {
+                                displayValue = '$' + displayValue.toLocaleString();
+                            }
+                            
+                            popupContent += `<p style="margin: 5px 0;"><strong>${displayKey}:</strong> ${displayValue}</p>`;
+                        }
+                    });
+                    
+                    // Add any other properties
+                    for (const [key, value] of Object.entries(props)) {
+                        if (!keyProps.includes(key) && value !== null && value !== undefined && value !== '') {
+                            const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            popupContent += `<p style="margin: 5px 0; font-size: 12px; color: #666;"><strong>${displayKey}:</strong> ${value}</p>`;
+                        }
+                    }
+                    
+                    popupContent += '</div>';
+                    layer.bindPopup(popupContent, {maxWidth: 400});
+                    
+                    // Add click event
+                    layer.on('click', function(e) {
+                        highlightParcel(layer);
+                        L.DomEvent.stopPropagation(e);
+                    });
+                    
+                    // Add hover effects
+                    layer.on('mouseover', function(e) {
+                        if (layer !== highlightedParcel) {
+                            layer.setStyle({
+                                weight: 2,
+                                opacity: 1
+                            });
+                        }
+                    });
+                    
+                    layer.on('mouseout', function(e) {
+                        if (layer !== highlightedParcel) {
+                            layer.setStyle(parcelStyle);
+                        }
+                    });
+                }
+            }).addTo(map);
+            
+            // Fit map to show all parcels with padding
+            if (parcelLayer.getBounds().isValid()) {
+                map.fitBounds(parcelLayer.getBounds(), {
+                    padding: [20, 20],
+                    maxZoom: 12
+                });
+            }
+        }
+        
+        // Highlight selected parcel
+        function highlightParcel(layer) {
+            // Reset previous highlight
+            if (highlightedParcel) {
+                highlightedParcel.setStyle(parcelStyle);
+            }
+            
+            // Highlight new parcel
+            layer.setStyle(highlightStyle);
+            highlightedParcel = layer;
+            
+            // Bring to front
+            layer.bringToFront();
+        }
+        
+        // Enhanced geocoding function for Oneida County
+        async function geocodeAddress(address) {
+            // Add Oneida County context if not present
+            let searchAddress = address;
+            if (!address.toLowerCase().includes('oneida') && !address.toLowerCase().includes('ny')) {
+                searchAddress = address + ', Oneida County, NY';
+            }
+            
+            const encodedAddress = encodeURIComponent(searchAddress);
+            
+            try {
+                // Use Nominatim with better parameters
+                const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodedAddress}&limit=5&countrycodes=us&bounded=1&viewbox=-75.8,-43.0,-75.0,43.5`;
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'OneidaParcelMap/1.0'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Geocoding service error: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data && data.length > 0) {
+                    // Find the result closest to Oneida County
+                    let bestResult = data[0];
+                    for (let result of data) {
+                        if (result.display_name.toLowerCase().includes('oneida')) {
+                            bestResult = result;
+                            break;
+                        }
+                    }
+                    
+                    return {
+                        lat: parseFloat(bestResult.lat),
+                        lon: parseFloat(bestResult.lon),
+                        display_name: bestResult.display_name
+                    };
+                } else {
+                    throw new Error('Address not found. Try including city name (e.g., "Rome, NY" or "Utica, NY")');
+                }
+            } catch (fetchError) {
+                throw new Error('Unable to find address. Try: "123 Main St, Rome, NY" or "Genesee St, Utica, NY"');
+            }
+        }
+        
+        // Find parcel containing a point
+        function findParcelAtPoint(lat, lon) {
+            let foundParcel = null;
+            let closestDistance = Infinity;
+            
+            if (!parcelLayer) return null;
+            
+            parcelLayer.eachLayer(function(layer) {
+                try {
+                    const feature = layer.feature;
+                    if (!feature || !feature.geometry) return;
+                    
+                    // Create a point to test
+                    const point = L.latLng(lat, lon);
+                    
+                    // Check if point is inside the polygon
+                    if (isPointInPolygon(point, layer)) {
+                        foundParcel = layer;
+                        return false; // Break the loop
+                    }
+                    
+                    // If not inside, check distance to center
+                    const bounds = layer.getBounds();
+                    if (bounds.isValid()) {
+                        const center = bounds.getCenter();
+                        const distance = point.distanceTo(center);
+                        
+                        if (distance < closestDistance) {
+                            closestDistance = distance;
+                            if (!foundParcel) foundParcel = layer; // Only set if no exact match found
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Error processing parcel:', e);
+                }
+            });
+            
+            return foundParcel;
+        }
+        
+        // Simple point-in-polygon test
+        function isPointInPolygon(point, layer) {
+            try {
+                const bounds = layer.getBounds();
+                return bounds.contains(point);
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        // Search function
+        async function searchAddress() {
+            const address = document.getElementById('addressInput').value.trim();
+            const statusDiv = document.getElementById('searchStatus');
+            
+            if (!address) {
+                statusDiv.innerHTML = '<div class="error">Please enter an address</div>';
+                return;
+            }
+            
+            if (!parcelData) {
+                statusDiv.innerHTML = '<div class="error">Parcel data not loaded yet</div>';
+                return;
+            }
+            
+            statusDiv.innerHTML = '<div class="loading">Searching...</div>';
+            
+            // Remove previous search marker
+            if (searchMarker) {
+                map.removeLayer(searchMarker);
+                searchMarker = null;
+            }
+            
+            try {
+                // Geocode the address
+                const location = await geocodeAddress(address);
+                console.log('Geocoded location:', location);
+                
+                // Check if location is reasonable for Oneida County
+                if (location.lat < 42.5 || location.lat > 43.8 || location.lon < -76.0 || location.lon > -74.8) {
+                    throw new Error('Address appears to be outside Oneida County area');
+                }
+                
+                // Add a search marker
+                searchMarker = L.marker([location.lat, location.lon], {
+                    icon: L.icon({
+                        iconUrl: 'data:image/svg+xml;base64,' + btoa(`
+                            <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" viewBox="0 0 24 24" fill="red">
+                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                            </svg>
+                        `),
+                        iconSize: [25, 25],
+                        iconAnchor: [12, 25]
+                    })
+                }).addTo(map);
+                
+                // Zoom to location
+                map.setView([location.lat, location.lon], 17);
+                
+                // Find parcel at this location
+                const parcel = findParcelAtPoint(location.lat, location.lon);
+                
+                if (parcel) {
+                    // Highlight and open popup
+                    setTimeout(() => {
+                        highlightParcel(parcel);
+                        parcel.openPopup();
+                    }, 500);
+                    statusDiv.innerHTML = '<div class="success">Address found! Parcel highlighted.</div>';
+                } else {
+                    // Show search result
+                    searchMarker.bindPopup(`
+                        <div style="font-family: Arial, sans-serif;">
+                            <h4 style="margin: 0 0 10px 0;">Search Result</h4>
+                            <p><strong>Address:</strong> ${location.display_name}</p>
+                            <p><em>No parcel boundary found at this exact location</em></p>
+                        </div>
+                    `).openPopup();
+                    statusDiv.innerHTML = '<div style="color: orange; font-size: 12px;">Address found, but no parcel boundary at exact location</div>';
+                }
+                
+            } catch (error) {
+                console.error('Search error:', error);
+                statusDiv.innerHTML = `<div class="error">${error.message}</div>`;
+            }
+        }
+        
+        // Zoom to county function
+        function zoomToCounty() {
+            if (parcelLayer && parcelLayer.getBounds().isValid()) {
+                map.fitBounds(parcelLayer.getBounds(), {
+                    padding: [20, 20],
+                    maxZoom: 12
+                });
+            } else {
+                // Fallback to Oneida County bounds
+                map.setView([43.2081, -75.4557], 9);
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('searchBtn').addEventListener('click', searchAddress);
+        document.getElementById('addressInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchAddress();
+            }
+        });
+        document.getElementById('zoomToCounty').addEventListener('click', zoomToCounty);
+        
+        // Initialize the map and load data
+        loadParcelData();
+    </script>
+</body>
+</html>
